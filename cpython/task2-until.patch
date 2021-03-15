@@ -1,0 +1,100 @@
+commit d905cef99a6dc8e7733078217392625f8099a2fb
+Author: George Atanasyan <gosha@atanasyan.com>
+Date:   Sat Mar 13 12:33:26 2021 +0300
+
+    [task2] Implement `until` statement
+    
+    Introduce new `until <cond>` statement. This statement is equivalent
+    to `while not <cond>` statement.
+
+diff --git a/Grammar/Grammar b/Grammar/Grammar
+index 4c3f33da32..37055be679 100644
+--- a/Grammar/Grammar
++++ b/Grammar/Grammar
+@@ -62,9 +62,10 @@ global_stmt: 'global' NAME (',' NAME)*
+ exec_stmt: 'exec' expr ['in' test [',' test]]
+ assert_stmt: 'assert' test [',' test]
+ 
+-compound_stmt: if_stmt | while_stmt | for_stmt | try_stmt | with_stmt | funcdef | classdef | decorated
++compound_stmt: if_stmt | while_stmt | until_stmt | for_stmt | try_stmt | with_stmt | funcdef | classdef | decorated
+ if_stmt: 'if' test ':' suite ('elif' test ':' suite)* ['else' ':' suite]
+ while_stmt: 'while' test ':' suite ['else' ':' suite]
++until_stmt: 'until' test ':' suite
+ for_stmt: 'for' exprlist 'in' testlist ':' suite ['else' ':' suite]
+ try_stmt: ('try' ':' suite
+            ((except_clause ':' suite)+
+diff --git a/Lib/test/test_grammar.py b/Lib/test/test_grammar.py
+index 228586ece0..163c4e9649 100644
+--- a/Lib/test/test_grammar.py
++++ b/Lib/test/test_grammar.py
+@@ -785,6 +785,20 @@ hello world
+             x = 2
+         self.assertEqual(x, 2)
+ 
++    def test_until(self):
++        # 'until' test ':' suite
++        until 1: pass
++
++        # Issue1920: "while 0" is optimized away,
++        # ensure that the "else" clause is still present.
++        x = 3
++        y = 3
++        until y == 0:
++            x -= 1
++            y -= 1
++        self.assertEqual(y, 0)
++        self.assertEqual(x, y)
++
+     def test_for(self):
+         # 'for' exprlist 'in' exprlist ':' suite ['else' ':' suite]
+         for i in 1, 2, 3: pass
+diff --git a/Python/ast.c b/Python/ast.c
+index 10571a3ec2..33e3ab9a16 100644
+--- a/Python/ast.c
++++ b/Python/ast.c
+@@ -2968,6 +2968,36 @@ ast_for_while_stmt(struct compiling *c, const node *n)
+     return NULL;
+ }
+ 
++static stmt_ty
++ast_for_until_stmt(struct compiling *c, const node *n)
++{
++    /* until_stmt: 'until' test ':' suite */
++    REQ(n, until_stmt);
++
++    if (NCH(n) == 4) {
++        expr_ty expression;
++        asdl_seq *suite_seq;
++
++        expression = ast_for_expr(c, CHILD(n, 1));
++        if (!expression)
++            return NULL;
++        suite_seq = ast_for_suite(c, CHILD(n, 3));
++        if (!suite_seq)
++            return NULL;
++
++        expression = UnaryOp(Not, expression, LINENO(n), n->n_col_offset,
++                             c->c_arena);
++
++        return While(expression, suite_seq, NULL, LINENO(n), n->n_col_offset,
++                     c->c_arena);
++    }
++
++    PyErr_Format(PyExc_SystemError,
++                 "wrong number of tokens for 'until' statement: %d",
++                 NCH(n));
++    return NULL;
++}
++
+ static stmt_ty
+ ast_for_for_stmt(struct compiling *c, const node *n)
+ {
+@@ -3302,6 +3332,8 @@ ast_for_stmt(struct compiling *c, const node *n)
+                 return ast_for_if_stmt(c, ch);
+             case while_stmt:
+                 return ast_for_while_stmt(c, ch);
++            case until_stmt:
++                return ast_for_until_stmt(c, ch);
+             case for_stmt:
+                 return ast_for_for_stmt(c, ch);
+             case try_stmt:

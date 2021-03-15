@@ -1,0 +1,162 @@
+commit 473f1c21ad695ae6a28998b843a04a1711035ee5
+Author: George Atanasyan <gosha@atanasyan.com>
+Date:   Sat Mar 13 14:08:50 2021 +0300
+
+    [task3] Implement unary postfix increment/decrement operators
+    
+    Implement unary postfix increment/decrement operators. Now it's possible
+    to write the following code:
+    ```
+    num = 0
+    num++
+    num--
+    ```
+    
+    This feature slightly incompatible with standard Python code because the
+    following expression becomes invalid:
+    ```
+    1--1
+    ```
+    and needs to be replaced by this one:
+    ```
+    1-(-1)
+    ```
+
+diff --git a/Grammar/Grammar b/Grammar/Grammar
+index 37055be679..149a8e7057 100644
+--- a/Grammar/Grammar
++++ b/Grammar/Grammar
+@@ -34,10 +34,15 @@ stmt: simple_stmt | compound_stmt
+ simple_stmt: small_stmt (';' small_stmt)* [';'] NEWLINE
+ small_stmt: (expr_stmt | print_stmt  | del_stmt | pass_stmt | flow_stmt |
+              import_stmt | global_stmt | exec_stmt | assert_stmt)
+-expr_stmt: testlist (augassign (yield_expr|testlist) |
++expr_stmt: testlist (augassign (yield_expr|testlist) | incr_stmt | decr_stmt |
+                      ('=' (yield_expr|testlist))*)
+ augassign: ('+=' | '-=' | '*=' | '/=' | '%=' | '&=' | '|=' | '^=' |
+             '<<=' | '>>=' | '**=' | '//=')
++
++# Increment/decrement
++incr_stmt: '++'
++decr_stmt: '--'
++
+ # For normal assignments, additional restrictions enforced by the interpreter
+ print_stmt: 'print' ( [ test (',' test)* [','] ] |
+                       '>>' test [ (',' test)+ [','] ] )
+diff --git a/Include/token.h b/Include/token.h
+index 72659ac053..1a406e76e4 100644
+--- a/Include/token.h
++++ b/Include/token.h
+@@ -60,10 +60,12 @@ extern "C" {
+ #define DOUBLESLASH	48
+ #define DOUBLESLASHEQUAL 49
+ #define AT              50	
++#define INCREMENT       51
++#define DECREMENT       52
+ /* Don't forget to update the table _PyParser_TokenNames in tokenizer.c! */
+-#define OP		51
+-#define ERRORTOKEN	52
+-#define N_TOKENS	53
++#define OP		53
++#define ERRORTOKEN	54
++#define N_TOKENS	55
+ 
+ /* Special definitions for cooperation with parser */
+ 
+diff --git a/Lib/test/test_grammar.py b/Lib/test/test_grammar.py
+index 163c4e9649..d6df9fe75f 100644
+--- a/Lib/test/test_grammar.py
++++ b/Lib/test/test_grammar.py
+@@ -940,6 +940,13 @@ hello world
+             x = -1*1/1 + 1*1 - ---1*1
+         x = -1*1/1.0 + 1*1 - ---1*1
+ 
++    def test_inc_dec(self):
++        x = 1
++        x--
++        self.assertEqual(0)
++        x++
++        self.assertEqual(1)
++
+     def test_selectors(self):
+         ### trailer: '(' [testlist] ')' | '[' subscript ']' | '.' NAME
+         ### subscript: expr | [expr] ':' [expr]
+diff --git a/Parser/tokenizer.c b/Parser/tokenizer.c
+index 8966661194..343ce84617 100644
+--- a/Parser/tokenizer.c
++++ b/Parser/tokenizer.c
+@@ -86,6 +86,8 @@ char *_PyParser_TokenNames[] = {
+     "DOUBLESLASH",
+     "DOUBLESLASHEQUAL",
+     "AT",
++    "INCREMENT",
++    "DECREMENT",
+     /* This table must match the #defines in token.h! */
+     "OP",
+     "<ERRORTOKEN>",
+@@ -1108,11 +1110,13 @@ PyToken_TwoChars(int c1, int c2)
+     case '+':
+         switch (c2) {
+         case '=':               return PLUSEQUAL;
++        case '+':               return INCREMENT;
+         }
+         break;
+     case '-':
+         switch (c2) {
+         case '=':               return MINEQUAL;
++        case '-':               return DECREMENT;
+         }
+         break;
+     case '*':
+diff --git a/Python/ast.c b/Python/ast.c
+index 33e3ab9a16..89a2d45df8 100644
+--- a/Python/ast.c
++++ b/Python/ast.c
+@@ -2228,6 +2228,47 @@ ast_for_expr_stmt(struct compiling *c, const node *n)
+ 
+         return AugAssign(expr1, newoperator, expr2, LINENO(n), n->n_col_offset,
+                          c->c_arena);
++    } else if ((TYPE(CHILD(n, 1)) == incr_stmt) ||
++               (TYPE(CHILD(n, 1)) == decr_stmt)) {
++      expr_ty expr1, expr2;
++      node *ch = CHILD(n, 0);
++      operator_ty operator;
++
++      switch (TYPE(CHILD(n, 1))) {
++      case incr_stmt:
++          operator= Add;
++          break;
++      case decr_stmt:
++          operator= Sub;
++          break;
++      }
++
++      expr1 = ast_for_testlist(c, ch);
++      if (!expr1) {
++          return NULL;
++      }
++
++      switch (expr1->kind) {
++      case Name_kind:
++          if (!forbidden_check(c, n, PyBytes_AS_STRING(expr1->v.Name.id)))
++              return NULL;
++          expr1->v.Name.ctx = Store;
++          break;
++      default:
++          ast_error(ch, "illegal target for increment/decrement");
++          return NULL;
++      }
++      // Create a PyObject for the number 1
++      PyObject *pynum = parsenumber(c, "1");
++
++      if (PyArena_AddPyObject(c->c_arena, pynum) < 0) {
++          Py_DECREF(pynum);
++          return NULL;
++      }
++      // Create that as an expression on the same line and offset as the ++/--
++      expr2 = Num(pynum, LINENO(n), n->n_col_offset, c->c_arena);
++      return AugAssign(expr1, operator, expr2, LINENO(n), n->n_col_offset,
++                       c->c_arena);
+     }
+     else {
+         int i;
