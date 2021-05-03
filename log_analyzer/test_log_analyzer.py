@@ -3,12 +3,17 @@
 
 
 import datetime
+from re import I
 import tempfile
 import unittest
-
-from log_analyzer import find_log, report_exists, parse_log, count_stats, render_report, read_config
+from log_analyzer import find_log, report_exists, parse_log, count_stats, read_config
+from collections import namedtuple
 from os import path
 from pathlib import Path
+
+
+testLogFileTuple = namedtuple("log", ["path", "is_gz"])
+
 
 class TestLogAnalyzer(unittest.TestCase):
     def setUp(self):
@@ -51,7 +56,8 @@ class TestLogAnalyzer(unittest.TestCase):
         log_path = path.join(self.test_path, 'nginx-access-ui.log-20170530')
         Path(log_path).touch()
 
-        log = list(parse_log(log_path, False))
+        log = testLogFileTuple(log_path, False)
+        log = list(parse_log(log))
         self.assertListEqual(log, [])
 
     def test_parse_log(self):
@@ -61,7 +67,8 @@ class TestLogAnalyzer(unittest.TestCase):
             f.write('1.99.174.176 3b81f63526fa8  - [29/Jun/2017:03:50:22 +0300] "GET /api/1/photogenic_banners/list/?server_name=WIN7RB4 HTTP/1.1" 200 12 "-" "Python-urllib/2.7" "-" "1498697422-32900793-4708-9752770" "-" 0.133\n')
             f.write('1.169.137.128 -  - [29/Jun/2017:03:50:22 +0300] "0" 400 19415 "-" "Slotovod" "-" "1498697422-2118016444-4708-9752769" "712e90144abee9" 0.199\n')
 
-        log = list(parse_log(log_path, False))
+        log = testLogFileTuple(log_path, False)
+        log = list(parse_log(log))
         self.assertListEqual(log, [
             ('1.196.116.32', '-', '-', '[29/Jun/2017:03:50:22 +0300]', '"GET /api/v2/banner/25019354 HTTP/1.1"', '200', '927', '"-"', '"Lynx/2.8.8dev.9 libwww-FM/2.14 SSL-MM/1.4.1 GNUTLS/2.10.5"', '"-"', '"1498697422-2190034393-4708-9752759"', '"dc7161be3"', '0.390'),
             ('1.99.174.176', '3b81f63526fa8', '-', '[29/Jun/2017:03:50:22 +0300]', '"GET /api/1/photogenic_banners/list/?server_name=WIN7RB4 HTTP/1.1"', '200', '12', '"-"', '"Python-urllib/2.7"', '"-"', '"1498697422-32900793-4708-9752770"', '"-"', '0.133'),
@@ -110,59 +117,6 @@ class TestLogAnalyzer(unittest.TestCase):
         stats = count_stats(log, err_perc=1)
         self.assertFalse(stats['ok'])
         self.assertEqual(stats['err_perc'], 10)
-
-    def test_render_report(self):
-        stats = {
-            '/url/1': {
-                'url': '/url/1', 'count': 4, 'time_sum': 0.82, 'time_max': 0.4, 'time_med': 0.16, 'count_perc': 44.444, 'time_perc': 38.318, 'time_avg': 0.205
-            },
-            '/url/2': {
-                'url': '/url/2', 'count': 3, 'time_sum': 0.82, 'time_max': 0.32, 'time_med': 0.3, 'count_perc': 33.333, 'time_perc': 38.318, 'time_avg': 0.273
-            },
-            '/url/3': {
-                'url': '/url/3', 'count': 2, 'time_sum': 0.5, 'time_max': 0.3, 'time_med': 0.25, 'count_perc': 22.222, 'time_perc': 23.364, 'time_avg': 0.25
-            }
-        }
-
-        report = render_report(stats, 2, '<html>$table_json;</html>')
-        self.assertEqual(report, "<html>[{'url': '/url/1', 'count': 4, 'time_sum': 0.82, 'time_max': 0.4, 'time_med': 0.16, 'count_perc': 44.444, 'time_perc': 38.318, 'time_avg': 0.205}, {'url': '/url/2', 'count': 3, 'time_sum': 0.82, 'time_max': 0.32, 'time_med': 0.3, 'count_perc': 33.333, 'time_perc': 38.318, 'time_avg': 0.273}];</html>")
-
-    def test_read_config_empty(self):
-        config_path = path.join(self.test_path, 'config.ini')
-        Path(config_path).touch()
-
-        config_orig = {
-            "REPORT_SIZE": 1000,
-            "REPORT_DIR":  "./test",
-            "LOG_DIR":     "./test",
-            "LOG_FILE":    None
-        }
-        config_new = dict(config_orig)
-
-        read_config(config_new, config_path)
-
-        self.assertDictEqual(config_new, config_orig)
-
-    def test_read_config(self):
-        config_path = path.join(self.test_path, 'config.ini')
-        with open(config_path, "w") as f:
-            f.write('{"REPORT_DIR":  "./test-new", "UNKNOWN_ARG": 777}')
-
-        config = {
-            "REPORT_SIZE": 1000,
-            "REPORT_DIR":  "./test",
-            "LOG_DIR":     "./test",
-            "LOG_FILE":    None
-        }
-
-        read_config(config, config_path)
-
-        self.assertDictEqual(config, {
-            "REPORT_SIZE": 1000,
-            "REPORT_DIR":  "./test-new",
-            "LOG_DIR":     "./test",
-            "LOG_FILE":    None
-        })
 
 
 if __name__ == '__main__':

@@ -3,14 +3,13 @@
 
 
 from os.path import dirname, isfile, join, realpath
-from getopt import getopt, GetoptError
+from argparse import ArgumentParser, FileType
 from collections import namedtuple
 from gzip import open as gzopen
-from re import compile, DOTALL
+from re import I, compile, DOTALL
 from datetime import datetime
 from statistics import median
 from string import Template
-from sys import argv, exit
 from os import scandir
 from json import loads as json_loads
 import logging
@@ -23,6 +22,8 @@ config = {
     "LOG_FILE":    None
 }
 
+REGEX = compile(
+    r"(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}|-) ([0-9a-zA-Z]+|-)  (\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}|-) (\[.+]|-) (\"[A-Z]{3,7} .+ .+\") (\d{3}|-) (\d+|-) (\".+\") (\".+\") (\".+\") (\".+\") (\".+\") (\d+\.\d+|-)", DOTALL)
 
 # log_format ui_short '$remote_addr  $remote_user $http_x_real_ip [$time_local] "$request" '
 #                     '$status $body_bytes_sent "$http_referer" '
@@ -30,10 +31,11 @@ config = {
 #                     '$request_time';
 
 
-def find_log(path):
-    log_file_tuple = namedtuple("log", ["path", "date", "is_gz"])
-    log_file = None
+logFileTuple = namedtuple("log", ["path", "date", "is_gz"])
 
+
+def find_log(path):
+    log_file = None
     files = scandir(path)
     file_prefix = "nginx-access-ui.log-"
     for elem in files:
@@ -50,7 +52,7 @@ def find_log(path):
                 except:
                     continue
                 if not log_file or date > log_file.date:
-                    log_file = log_file_tuple(elem.path, date, is_gz)
+                    log_file = logFileTuple(elem.path, date, is_gz)
 
     return log_file
 
@@ -59,19 +61,14 @@ def report_exists(path, date):
     return isfile(join(path, f"report-{date.strftime('%Y.%m.%d')}.html"))
 
 
-def parse_log(path, is_gz):
-    if is_gz:
-        _open = gzopen
-    else:
-        _open = open
+def parse_log(log):
+    opener = open if not log.is_gz else gzopen
 
-    with _open(path, "rt") as file:
-        regex = compile(
-            r"(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}|-) ([0-9a-zA-Z]+|-)  (\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}|-) (\[.+]|-) (\"[A-Z]{3,7} .+ .+\") (\d{3}|-) (\d+|-) (\".+\") (\".+\") (\".+\") (\".+\") (\".+\") (\d+\.\d+|-)", DOTALL)
+    with opener(log.path, "rt") as file:
         for line in file:
             if line:
                 line = line.rstrip("\n")
-                parsed_line = regex.match(line)
+                parsed_line = REGEX.match(line)
                 if parsed_line:
                     yield parsed_line.groups()
                 else:
@@ -133,63 +130,39 @@ def count_stats(log, err_perc):
             "stats": stats}
 
 
-def render_report(log, max_entries, templ):
-    table = sorted(log.values(), key=lambda value: value["time_sum"], reverse=True)
-
-    return Template(templ).safe_substitute(table_json=table[:max_entries])
-
-
 def save_report(log, max_entries, report_path):
     with open(join(dirname(realpath(__file__)), "template.html")) as file:
-        report = render_report(log, max_entries, str(file.read()))
+        log = sorted(log.values(),
+                     key=lambda value: value["time_sum"],
+                     reverse=True)[:max_entries]
+        report = Template(str(file.read())).safe_substitute(table_json=log)
         with open(report_path, "w") as report_file:
             report_file.write(report)
 
 
-def make_log_report(report_size, report_dir, log_dir):
-    log = find_log(log_dir)
-    if log:
-        if report_exists(report_dir, log.date):
-            logging.info(f'Report for {log.date} exists')
-        else:
-            stats = count_stats(parse_log(log.path, log.is_gz), err_perc=50)
-            if stats["ok"]:
-                report_file = join(
-                    report_dir, f"report-{log.date.strftime('%Y.%m.%d')}.html")
-                save_report(stats["stats"], report_size, report_file)
-            else:
-                logging.info(
-                    f"There is more than {stats['err_perc']}% of errors while parsing the log")
-    else:
-        logging.info('Could not find any logs')
-
-
-def read_config(config, config_path):
-    with open(config_path, "r") as file:
+def read_config(config, new_config):
+    with new_config as file:
         config_str = file.read()
         if config_str:
             user_config = json_loads(config_str)
             for key in config.keys():
                 if key in user_config.keys():
-                    config[key] = user_config[key]
+                    config.update(user_config)
         else:
             logging.info("Config file is empty")
 
 
-def main(argv, config):
-    try:
-        opts, _ = getopt(argv, "c:", ["config="])
-    except GetoptError:
-        print("Cant parse arguments")
-        exit(2)
+def main(config):
+    parser = ArgumentParser()
+    parser.add_argument("-c", "--config", type=FileType())
 
-    for opt, val in opts:
-        if opt in ("-c", "--config"):
-            try:
-                read_config(config, realpath(val))
-            except Exception as err:
-                print("Cant parse config")
-                raise err
+    new_config = parser.parse_args().config
+    if new_config:
+        try:
+            read_config(config, new_config)
+        except Exception as err:
+            print("Cant parse config")
+            raise err
 
     logging.basicConfig(filename=config["LOG_FILE"],
                         format="[%(asctime)s] %(levelname).1s %(message)s",
@@ -197,12 +170,28 @@ def main(argv, config):
                         level=logging.DEBUG)
 
     try:
-        make_log_report(config["REPORT_SIZE"],
-                        realpath(config["REPORT_DIR"]),
-                        realpath(config["LOG_DIR"]))
+        log = find_log(realpath(config["LOG_DIR"]))
+        if log:
+            report_dir = realpath(config["REPORT_DIR"])
+            if report_exists(report_dir, log.date):
+                logging.info(f'Report for {log.date} exists')
+            else:
+                stats = count_stats(parse_log(log), err_perc=50)
+                if stats["ok"]:
+                    report_date = log.date.strftime('%Y.%m.%d')
+                    report_file = join(report_dir, f"report-{report_date}.html")
+                    report_size = config["REPORT_SIZE"]
+                    save_report(stats["stats"], report_size, report_file)
+                else:
+                    msg = f"There is more than {stats['err_perc']}% of errors while parsing the log"
+                    logging.info(msg)
+        else:
+            logging.info('Could not find any logs')
+
+
     except Exception as err:
         logging.exception(err)
 
 
 if __name__ == "__main__":
-    main(argv[1:], config)
+    main(config)
