@@ -89,15 +89,15 @@ class TestLogAnalyzer(unittest.TestCase):
         ]
 
         stats = count_stats(log, err_perc=11)
-        self.assertTrue(stats['ok'])
-        self.assertEqual(len(stats['stats']), 3)
-        self.assertDictEqual(stats['stats']['/url/1'], {
+        self.assertIsNotNone(stats)
+        self.assertEqual(len(stats), 3)
+        self.assertDictEqual(stats['/url/1'], {
             'url': '/url/1', 'count': 4, 'time_sum': 0.82, 'time_max': 0.4, 'time_med': 0.16, 'count_perc': 44.444, 'time_perc': 38.318, 'time_avg': 0.205
         })
-        self.assertDictEqual(stats['stats']['/url/2'], {
+        self.assertDictEqual(stats['/url/2'], {
             'url': '/url/2', 'count': 3, 'time_sum': 0.82, 'time_max': 0.32, 'time_med': 0.3, 'count_perc': 33.333, 'time_perc': 38.318, 'time_avg': 0.273
         })
-        self.assertDictEqual(stats['stats']['/url/3'], {
+        self.assertDictEqual(stats['/url/3'], {
             'url': '/url/3', 'count': 2, 'time_sum': 0.5, 'time_max': 0.3, 'time_med': 0.25, 'count_perc': 22.222, 'time_perc': 23.364, 'time_avg': 0.25
         })
 
@@ -115,8 +115,7 @@ class TestLogAnalyzer(unittest.TestCase):
         ]
 
         stats = count_stats(log, err_perc=1)
-        self.assertFalse(stats['ok'])
-        self.assertEqual(stats['err_perc'], 10)
+        self.assertIsNone(stats)
 
 
 if __name__ == '__main__':
