@@ -1,14 +1,23 @@
 # -*- coding: utf-8 -*-
 
-from pymemcache.client.base import Client
+from pymemcache.client.base import Client as MemcacheClient
 
 
 class Store():
-    def __init__(self, retry=3):
-        self.client = Client(("localhost", 11211),
-                             connect_timeout=1,
-                             timeout=1)
+    def __init__(self, host="localhost", port=11211, timeout=1, retry=3):
+        self.client = MemcacheClient((host, port),
+                                     connect_timeout=timeout,
+                                     timeout=timeout)
         self.retry = retry
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, type, value, traceback):
+        self.close()
+
+    def close(self):
+        self.client.close()
 
     def cache_get(self, key):
         for _ in range(self.retry):
@@ -17,10 +26,10 @@ class Store():
             except:
                 pass
 
-    def cache_set(self, key, val):
+    def cache_set(self, key, val, expire=0):
         for _ in range(self.retry):
             try:
-                self.client.set(key, val)
+                self.client.set(key, val, expire)
             except:
                 pass
 

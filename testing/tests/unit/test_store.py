@@ -1,12 +1,13 @@
 # -*- coding: utf-8 -*-
 
-from unittest import TestCase
-from unittest import main as run_test
+import unittest
+
 from unittest.mock import Mock
+
 from app.store import Store
 
 
-class TestSuite(TestCase):
+class TestSuite(unittest.TestCase):
     def test_store_cache_get(self):
         _self = Mock()
         _self.retry = 3
@@ -32,4 +33,4 @@ class TestSuite(TestCase):
         self.assertRaises(Exception, Store.get, _self, "key")
 
 if __name__ == "__main__":
-    run_test()
+    unittest.main()
