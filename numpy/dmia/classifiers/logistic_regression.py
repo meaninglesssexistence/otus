@@ -34,7 +34,7 @@ class LogisticRegression:
 
         # Run stochastic gradient descent to optimize W
         self.loss_history = []
-        for it in xrange(num_iters):
+        for it in range(num_iters):
             #########################################################################
             # TODO:                                                                 #
             # Sample batch_size elements from the training data and their           #
@@ -67,7 +67,7 @@ class LogisticRegression:
             #########################################################################
 
             if verbose and it % 100 == 0:
-                print 'iteration %d / %d: loss %f' % (it, num_iters, loss)
+                print('iteration %d / %d: loss %f' % (it, num_iters, loss))
 
         return self
 
@@ -137,7 +137,6 @@ class LogisticRegression:
         dw = np.zeros_like(self.w)  # initialize the gradient as zero
         loss = 0
         # Compute loss and gradient. Your code should not contain python loops.
-
 
         # Right now the loss is a sum over all training examples, but we want it
         # to be an average instead so we divide by num_train.
