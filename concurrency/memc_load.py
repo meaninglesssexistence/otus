@@ -18,27 +18,33 @@ NORMAL_ERR_RATE = 0.01
 AppsInstalled = collections.namedtuple("AppsInstalled", ["dev_type", "dev_id", "lat", "lon", "apps"])
 
 
+class MemCacheClient:
+    def __init__(self, addr):
+        self.client = memcache.Client([addr])
+
+    def set(self, key, value):
+        self.client.set(key, value)
+
+
 def dot_rename(path):
     head, fn = os.path.split(path)
     # atomic in most cases
     os.rename(path, os.path.join(head, "." + fn))
 
 
-def insert_appsinstalled(memc_addr, appsinstalled, dry_run=False):
+def insert_appsinstalled(memc_client, appsinstalled, dry_run=False):
     ua = appsinstalled_pb2.UserApps()
     ua.lat = appsinstalled.lat
     ua.lon = appsinstalled.lon
     key = "%s:%s" % (appsinstalled.dev_type, appsinstalled.dev_id)
     ua.apps.extend(appsinstalled.apps)
     packed = ua.SerializeToString()
-    # @TODO persistent connection
     # @TODO retry and timeouts!
     try:
         if dry_run:
             logging.debug("%s - %s -> %s" % (memc_addr, key, str(ua).replace("\n", " ")))
         else:
-            memc = memcache.Client([memc_addr])
-            memc.set(key, packed)
+            memc_client.set(key, packed)
     except Exception as e:
         logging.exception("Cannot write to memc %s: %s" % (memc_addr, e))
         return False
@@ -66,10 +72,10 @@ def parse_appsinstalled(line):
 
 def main(options):
     device_memc = {
-        "idfa": options.idfa,
-        "gaid": options.gaid,
-        "adid": options.adid,
-        "dvid": options.dvid,
+        "idfa": MemCacheClient(options.idfa),
+        "gaid": MemCacheClient(options.gaid),
+        "adid": MemCacheClient(options.adid),
+        "dvid": MemCacheClient(options.dvid),
     }
     for fn in glob.iglob(options.pattern):
         processed = errors = 0
@@ -83,12 +89,12 @@ def main(options):
             if not appsinstalled:
                 errors += 1
                 continue
-            memc_addr = device_memc.get(appsinstalled.dev_type)
-            if not memc_addr:
+            memc_client = device_memc.get(appsinstalled.dev_type)
+            if not memc_client:
                 errors += 1
                 logging.error("Unknow device type: %s" % appsinstalled.dev_type)
                 continue
-            ok = insert_appsinstalled(memc_addr, appsinstalled, options.dry)
+            ok = insert_appsinstalled(memc_client, appsinstalled, options.dry)
             if ok:
                 processed += 1
             else:
