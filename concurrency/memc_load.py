@@ -128,34 +128,35 @@ def main(options):
     for memc_client in device_memc.values():
         memc_client.start()
 
-    for fn in glob.iglob(options.pattern):
-        errors = 0
-        logging.info('Processing %s' % fn)
-        fd = gzip.open(fn)
-        for line in fd:
-            line = line.decode('utf-8').strip()
-            if not line:
-                continue
-            appsinstalled = parse_appsinstalled(line)
-            if not appsinstalled:
-                errors += 1
-                continue
-            memc_client = device_memc.get(appsinstalled.dev_type)
-            if not memc_client:
-                errors += 1
-                logging.error("Unknow device type: %s" % appsinstalled.dev_type)
-                continue
-            insert_appsinstalled(memc_client, appsinstalled, options.dry)
-        fd.close()
-        dot_rename(fn)
+    try:
+        for fn in glob.iglob(options.pattern):
+            errors = 0
+            logging.info('Processing %s' % fn)
+            fd = gzip.open(fn)
+            for line in fd:
+                line = line.decode('utf-8').strip()
+                if not line:
+                    continue
+                appsinstalled = parse_appsinstalled(line)
+                if not appsinstalled:
+                    errors += 1
+                    continue
+                memc_client = device_memc.get(appsinstalled.dev_type)
+                if not memc_client:
+                    errors += 1
+                    logging.error("Unknow device type: %s" % appsinstalled.dev_type)
+                    continue
+                insert_appsinstalled(memc_client, appsinstalled, options.dry)
+            fd.close()
+            dot_rename(fn)
 
-        print_statistics(device_memc, errors)
+            print_statistics(device_memc, errors)
+    finally:
+        for memc_client in device_memc.values():
+            memc_client.end()
 
-    for memc_client in device_memc.values():
-        memc_client.end()
-
-    for memc_client in device_memc.values():
-        memc_client.join()
+        for memc_client in device_memc.values():
+            memc_client.join()
 
 
 def prototest():
