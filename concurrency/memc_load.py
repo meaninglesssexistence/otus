@@ -13,6 +13,7 @@ from optparse import OptionParser
 import appsinstalled_pb2
 # pip install python-memcached
 import memcache
+import time
 
 NORMAL_ERR_RATE = 0.01
 AppsInstalled = collections.namedtuple("AppsInstalled", ["dev_type", "dev_id", "lat", "lon", "apps"])
@@ -148,7 +149,9 @@ if __name__ == '__main__':
 
     logging.info("Memc loader started with options: %s" % opts)
     try:
+        start_time = time.time()
         main(opts)
+        logging.info("Processing took %s seconds" % (time.time() - start_time))
     except Exception as e:
         logging.exception("Unexpected error: %s" % e)
         sys.exit(1)
