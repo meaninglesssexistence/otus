@@ -38,14 +38,11 @@ class MemCacheClient(threading.Thread):
     def run(self):
         while True:
             with self.condition:
-                while True:
-                    if self.items:
-                        key, value = self.items.pop()
-                        if key is None:
-                            return
-                        self.client.set(key, value)
-                        break
-                    self.condition.wait()
+                self.condition.wait_for(lambda: self.items)
+                key, value = self.items.pop()
+            if key is None:
+                return
+            self.client.set(key, value)
 
 
 def dot_rename(path):
