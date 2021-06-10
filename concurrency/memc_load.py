@@ -21,10 +21,11 @@ AppsInstalled = collections.namedtuple("AppsInstalled", ["dev_type", "dev_id", "
 
 
 class MemCacheClient(threading.Thread):
-    def __init__(self, addr):
+    def __init__(self, addr, retry_attempt=3, socket_timeout=3):
         threading.Thread.__init__(self)
         self.addr = addr
-        self.client = memcache.Client([addr])
+        self.retry_attempt = retry_attempt
+        self.client = memcache.Client([addr], socket_timeout=socket_timeout)
         self.condition = threading.Condition()
         self.items = {}
         self.processed = self.errors = 0
@@ -52,17 +53,22 @@ class MemCacheClient(threading.Thread):
                 is_end = True
                 items.pop(None, None)
 
-            try:
-                # @TODO retry and timeouts!
-                if items:
-                    self.client.set_multi(items)
-                    self.processed += len(items)
-            except Exception as e:
-                logging.exception("Cannot write to memc %s: %s" % (self.addr, e))
-                self.error += len(items)
+            if items:
+                self._send(items)
 
             if is_end:
                 return
+
+    def _send(self, items):
+        for attempt in range(self.retry_attempt):
+            try:
+                self.client.set_multi(items)
+                self.processed += len(items)
+                return
+            except Exception as e:
+                if attempt == self.retry_attempt - 1:
+                    logging.exception("Cannot write to memc %s: %s" % (self.addr, e))
+                    self.error += len(items)
 
 
 def dot_rename(path):
