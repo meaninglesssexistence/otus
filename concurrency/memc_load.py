@@ -23,9 +23,11 @@ AppsInstalled = collections.namedtuple("AppsInstalled", ["dev_type", "dev_id", "
 class MemCacheClient(threading.Thread):
     def __init__(self, addr):
         threading.Thread.__init__(self)
+        self.addr = addr
         self.client = memcache.Client([addr])
         self.condition = threading.Condition()
         self.items = []
+        self.processed = self.errors = 0
 
     def set(self, key, value):
         with self.condition:
@@ -35,14 +37,25 @@ class MemCacheClient(threading.Thread):
     def end(self):
         self.set(None, None)
 
+    def reset_stat(self):
+        self.processed = self.errors = 0
+
     def run(self):
         while True:
             with self.condition:
                 self.condition.wait_for(lambda: self.items)
                 key, value = self.items.pop()
+
             if key is None:
                 return
-            self.client.set(key, value)
+
+            try:
+                # @TODO retry and timeouts!
+                self.client.set(key, value)
+                self.processed += 1
+            except Exception as e:
+                logging.exception("Cannot write to memc %s: %s" % (self.addr, e))
+                self.error += 1
 
 
 def dot_rename(path):
@@ -58,16 +71,10 @@ def insert_appsinstalled(memc_client, appsinstalled, dry_run=False):
     key = "%s:%s" % (appsinstalled.dev_type, appsinstalled.dev_id)
     ua.apps.extend(appsinstalled.apps)
     packed = ua.SerializeToString()
-    # @TODO retry and timeouts!
-    try:
-        if dry_run:
-            logging.debug("%s - %s -> %s" % (memc_addr, key, str(ua).replace("\n", " ")))
-        else:
-            memc_client.set(key, packed)
-    except Exception as e:
-        logging.exception("Cannot write to memc %s: %s" % (memc_addr, e))
-        return False
-    return True
+    if dry_run:
+        logging.debug("%s - %s -> %s" % (memc_addr, key, str(ua).replace("\n", " ")))
+    else:
+        memc_client.set(key, packed)
 
 
 def parse_appsinstalled(line):
@@ -89,6 +96,27 @@ def parse_appsinstalled(line):
     return AppsInstalled(dev_type, dev_id, lat, lon, apps)
 
 
+def print_statistics(device_memc, common_errors):
+    processed = 0
+    errors = common_errors
+
+    for memc_client in device_memc.values():
+        processed += memc_client.processed
+        errors += memc_client.errors
+
+    if not processed:
+        return
+
+    err_rate = float(errors) / processed
+    if err_rate < NORMAL_ERR_RATE:
+        logging.info("Acceptable error rate (%s). Successfull load" % err_rate)
+    else:
+        logging.error("High error rate (%s > %s). Failed load" % (err_rate, NORMAL_ERR_RATE))
+
+    for memc_client in device_memc.values():
+        memc_client.reset_stat()
+
+
 def main(options):
     device_memc = {
         "idfa": MemCacheClient(options.idfa),
@@ -101,7 +129,7 @@ def main(options):
         memc_client.start()
 
     for fn in glob.iglob(options.pattern):
-        processed = errors = 0
+        errors = 0
         logging.info('Processing %s' % fn)
         fd = gzip.open(fn)
         for line in fd:
@@ -117,23 +145,11 @@ def main(options):
                 errors += 1
                 logging.error("Unknow device type: %s" % appsinstalled.dev_type)
                 continue
-            ok = insert_appsinstalled(memc_client, appsinstalled, options.dry)
-            if ok:
-                processed += 1
-            else:
-                errors += 1
-        if not processed:
-            fd.close()
-            dot_rename(fn)
-            continue
-
-        err_rate = float(errors) / processed
-        if err_rate < NORMAL_ERR_RATE:
-            logging.info("Acceptable error rate (%s). Successfull load" % err_rate)
-        else:
-            logging.error("High error rate (%s > %s). Failed load" % (err_rate, NORMAL_ERR_RATE))
+            insert_appsinstalled(memc_client, appsinstalled, options.dry)
         fd.close()
         dot_rename(fn)
+
+        print_statistics(device_memc, errors)
 
     for memc_client in device_memc.values():
         memc_client.end()
