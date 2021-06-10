@@ -13,18 +13,39 @@ from optparse import OptionParser
 import appsinstalled_pb2
 # pip install python-memcached
 import memcache
+import threading
 import time
 
 NORMAL_ERR_RATE = 0.01
 AppsInstalled = collections.namedtuple("AppsInstalled", ["dev_type", "dev_id", "lat", "lon", "apps"])
 
 
-class MemCacheClient:
+class MemCacheClient(threading.Thread):
     def __init__(self, addr):
+        threading.Thread.__init__(self)
         self.client = memcache.Client([addr])
+        self.condition = threading.Condition()
+        self.items = []
 
     def set(self, key, value):
-        self.client.set(key, value)
+        with self.condition:
+            self.items.append((key, value))
+            self.condition.notify()
+
+    def end(self):
+        self.set(None, None)
+
+    def run(self):
+        while True:
+            with self.condition:
+                while True:
+                    if self.items:
+                        key, value = self.items.pop()
+                        if key is None:
+                            return
+                        self.client.set(key, value)
+                        break
+                    self.condition.wait()
 
 
 def dot_rename(path):
@@ -78,6 +99,10 @@ def main(options):
         "adid": MemCacheClient(options.adid),
         "dvid": MemCacheClient(options.dvid),
     }
+
+    for memc_client in device_memc.values():
+        memc_client.start()
+
     for fn in glob.iglob(options.pattern):
         processed = errors = 0
         logging.info('Processing %s' % fn)
@@ -112,6 +137,12 @@ def main(options):
             logging.error("High error rate (%s > %s). Failed load" % (err_rate, NORMAL_ERR_RATE))
         fd.close()
         dot_rename(fn)
+
+    for memc_client in device_memc.values():
+        memc_client.end()
+
+    for memc_client in device_memc.values():
+        memc_client.join()
 
 
 def prototest():
