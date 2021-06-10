@@ -26,12 +26,12 @@ class MemCacheClient(threading.Thread):
         self.addr = addr
         self.client = memcache.Client([addr])
         self.condition = threading.Condition()
-        self.items = []
+        self.items = {}
         self.processed = self.errors = 0
 
     def set(self, key, value):
         with self.condition:
-            self.items.append((key, value))
+            self.items[key] = value
             self.condition.notify()
 
     def end(self):
@@ -44,18 +44,25 @@ class MemCacheClient(threading.Thread):
         while True:
             with self.condition:
                 self.condition.wait_for(lambda: self.items)
-                key, value = self.items.pop()
+                items = self.items
+                self.items = {}
 
-            if key is None:
-                return
+            is_end = False
+            if None in items:
+                is_end = True
+                items.pop(None, None)
 
             try:
                 # @TODO retry and timeouts!
-                self.client.set(key, value)
-                self.processed += 1
+                if items:
+                    self.client.set_multi(items)
+                    self.processed += len(items)
             except Exception as e:
                 logging.exception("Cannot write to memc %s: %s" % (self.addr, e))
-                self.error += 1
+                self.error += len(items)
+
+            if is_end:
+                return
 
 
 def dot_rename(path):
