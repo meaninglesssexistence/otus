@@ -45,30 +45,44 @@ class BigBrother(type):
             if issubclass(type(value), BaseField):
                 fields[key] = value
         dct["fields"] = fields
-        dct["__init__"] = lambda *args: None
         return super().__new__(cls, name, bases, dct)
 
-    def __call__(self, *args):
-        cls = super().__call__(*args)
-        args = args[0]
-        for key, value in self.fields.items():
-            if key in args:
+
+class BaseRequest:
+    def __init__(self, args):
+        self.error_list = None
+        self.cleaned_data = {}
+        for field_name, field_value in args.items():
+            setattr(self, field_name, field_value)
+
+    def is_valid(self):
+        if self.error_list is not None:
+            return False
+
+        for key, value in self.__class__.fields.items():
+            if key in self.__dict__:
                 try:
-                    setattr(self, key, value.clean_data(args[key]))
+                    self.cleaned_data[key] = value.clean(self.__dict__[key])
                 except Exception as err:
-                    raise ValueError(f"Invalid '{key}' value: {err}")
+                    self._append_error(f"Invalid '{key}' value: {err}")
             else:
                 if value.required:
-                    raise ValueError(f"Missing argument: \"{key}\"")
+                    self._append_error(f"Missing argument: '{key}'")
                 else:
-                    setattr(self, key, None)
+                    self.cleaned_data[key] = None
 
-        if hasattr(self, "validate"):
-            try:
-                self.validate(cls)
-            except Exception as err:
-                raise ValueError(f"Invalid request data: {err}")
-        return cls
+        return not self.error_list
+
+    def _append_error(self, err):
+        if not self.error_list:
+            self.error_list = []
+        self.error_list.append(err)
+
+    @property
+    def errors(self):
+        if self.error_list is None:
+            self.is_valid()
+        return self.error_list if self.error_list else []
 
 
 class BaseField(object):
@@ -76,39 +90,39 @@ class BaseField(object):
         self.required = required
         self.nullable = nullable
 
-    def clean_data(self, data):
+    def clean(self, data):
         if data is None and not self.nullable:
             raise ValueError("Value cannot be None")
         return data
 
 
 class CharField(BaseField):
-    def clean_data(self, data):
-        super().clean_data(data)
+    def clean(self, data):
+        super().clean(data)
         if data and not isinstance(data, str):
             raise ValueError("Value type should be str")
         return data
 
 
 class ArgumentsField(BaseField):
-    def clean_data(self, data):
-        super().clean_data(data)
+    def clean(self, data):
+        super().clean(data)
         if data is not None and not isinstance(data, dict):
             raise ValueError("Value type should be dict")
         return data
 
 
 class EmailField(CharField):
-    def clean_data(self, data):
-        super().clean_data(data)
+    def clean(self, data):
+        super().clean(data)
         if data and not re.compile(r"[\w\.]+@[\w\.]+").match(data):
             raise ValueError("Email has invalid format")
         return data
 
 
 class PhoneField(BaseField):
-    def clean_data(self, data):
-        super().clean_data(data)
+    def clean(self, data):
+        super().clean(data)
         if not data:
             return
         if not isinstance(data, (str, int)):
@@ -121,8 +135,8 @@ class PhoneField(BaseField):
 
 
 class DateField(BaseField):
-    def clean_data(self, data):
-        super().clean_data(data)
+    def clean(self, data):
+        super().clean(data)
         if not data:
             return
         try:
@@ -132,8 +146,8 @@ class DateField(BaseField):
 
 
 class BirthDayField(DateField):
-    def clean_data(self, data):
-        date = super().clean_data(data)
+    def clean(self, data):
+        date = super().clean(data)
         if not data:
             return
 
@@ -142,8 +156,8 @@ class BirthDayField(DateField):
         return date
 
 class GenderField(BaseField):
-    def clean_data(self, data):
-        super().clean_data(data)
+    def clean(self, data):
+        super().clean(data)
         if data and not isinstance(data, int):
             raise ValueError("Gender should be integer")
         if data and data not in (0, 1, 2):
@@ -152,7 +166,7 @@ class GenderField(BaseField):
 
 
 class ClientIDsField(BaseField):
-    def clean_data(self, data):
+    def clean(self, data):
         if not isinstance(data, (list, tuple, set)):
             raise ValueError("Client IDs should be list, tuple or set")
         if not data:
@@ -162,12 +176,12 @@ class ClientIDsField(BaseField):
         return data
 
 
-class ClientsInterestsRequest(object, metaclass=BigBrother):
+class ClientsInterestsRequest(BaseRequest, metaclass=BigBrother):
     client_ids = ClientIDsField(required=True)
     date = DateField(required=False, nullable=True)
 
 
-class OnlineScoreRequest(object, metaclass=BigBrother):
+class OnlineScoreRequest(BaseRequest, metaclass=BigBrother):
     first_name = CharField(required=False, nullable=True)
     last_name = CharField(required=False, nullable=True)
     email = EmailField(required=False, nullable=True)
@@ -175,17 +189,20 @@ class OnlineScoreRequest(object, metaclass=BigBrother):
     birthday = BirthDayField(required=False, nullable=True)
     gender = GenderField(required=False, nullable=True)
 
-    def validate(self):
-        if self.first_name and self.last_name:
-            return
-        if self.email and self.phone:
-            return
-        if self.birthday and self.gender is not None:
-            return
-        raise ValueError(f"Missed required pair of arguments")
+    def is_valid(self):
+        if not super().is_valid():
+            return False
+        if self.cleaned_data['first_name'] and self.cleaned_data['last_name']:
+            return True
+        if self.cleaned_data['email'] and self.cleaned_data['phone']:
+            return True
+        if self.cleaned_data['birthday'] and self.cleaned_data['gender'] is not None:
+            return True
+        self.error_list.append(f"Missed required pair of arguments")
+        return False
 
 
-class MethodRequest(object, metaclass=BigBrother):
+class MethodRequest(BaseRequest, metaclass=BigBrother):
     account = CharField(required=False, nullable=True)
     login = CharField(required=True, nullable=True)
     token = CharField(required=True, nullable=True)
@@ -194,7 +211,7 @@ class MethodRequest(object, metaclass=BigBrother):
 
     @property
     def is_admin(self):
-        return self.login == ADMIN_LOGIN
+        return self.cleaned_data['login'] == ADMIN_LOGIN
 
 
 def check_auth(request):
@@ -213,28 +230,35 @@ def online_score_handler(method_request, ctx, store):
     if method_request.is_admin:
         return {"score": 42}, OK
 
+    arguments = method_request.cleaned_data['arguments']
     ctx["has"] = [
-        key for key, val in method_request.arguments.items() if val is not None
+        key for key, val in arguments.items() if val is not None
     ]
 
-    request = OnlineScoreRequest(method_request.arguments)
+    request = OnlineScoreRequest(arguments)
+    if not request.is_valid():
+        return f"Invalid requets: {request.errors}", INVALID_REQUEST
+
     response = scoring.get_score(store,
-                                 phone=request.phone,
-                                 email=request.email,
-                                 birthday=request.birthday,
-                                 gender=request.gender,
-                                 first_name=request.first_name,
-                                 last_name=request.last_name)
+                                 phone=request.cleaned_data['phone'],
+                                 email=request.cleaned_data['email'],
+                                 birthday=request.cleaned_data['birthday'],
+                                 gender=request.cleaned_data['gender'],
+                                 first_name=request.cleaned_data['first_name'],
+                                 last_name=request.cleaned_data['last_name'])
     return {"score": response}, OK
 
 
 def clients_interests_handler(method_request, ctx, store):
-    request = ClientsInterestsRequest(method_request.arguments)
+    request = ClientsInterestsRequest(method_request.cleaned_data['arguments'])
+    if not request.is_valid():
+        return f"Invalid requets: {request.errors}", INVALID_REQUEST
 
-    ctx["nclients"] = len(request.client_ids)
+    client_ids = request.cleaned_data['client_ids']
+    ctx["nclients"] = len(client_ids)
     interests = {}
 
-    for id in request.client_ids:
+    for id in client_ids:
         interests[id] = scoring.get_interests(store, id)
     return interests, OK
 
@@ -242,6 +266,8 @@ def clients_interests_handler(method_request, ctx, store):
 def method_handler(request, ctx, store):
     try:
         method_request = MethodRequest(request["body"])
+        if not method_request.is_valid():
+            return f"Invalid requets: {method_request.errors}", INVALID_REQUEST
 
         if not check_auth(method_request):
             return "Forbidden", FORBIDDEN
