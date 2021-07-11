@@ -33,7 +33,7 @@ def get_http_code_status(code):
     return statuses.get(code, '')
 
 
-def get_uri_path(uri):
+def strip_uri_path(uri):
     """ Get path part from URI. """
     uri = uri.split('?')[0]
     uri = uri.split('#')[0]
