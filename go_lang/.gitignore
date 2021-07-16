@@ -1,0 +1,6 @@
+go.mod
+go.sum
+appsinstalled.pb.go
+memc_load.exe
+memc_load
+*.tsv.gz
