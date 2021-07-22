@@ -3,12 +3,20 @@
 
 import argparse
 import logging
+import mimetypes
 import os
 
-from httpserver import HttpServer, Forbidden, MethodNotAllowed, NotFound
-from multiprocessing import Pool
+from http import HTTPStatus
+from httpserver import HttpServer, HttpError, send_response
 from multiprocessing_logging import install_mp_handler
-from utils import get_mime_type, strip_uri_path
+from urllib.parse import unquote
+
+
+def strip_uri_path(uri):
+    """ Вырезаем и возвращаем путь из URI. """
+    uri = uri.split('?')[0]
+    uri = uri.split('#')[0]
+    return unquote(uri)
 
 
 def get_path(doc_root, uri):
@@ -32,27 +40,26 @@ def get_path(doc_root, uri):
     return path
 
 
-def handle_request(request, doc_root):
-    """ Читаем запрос, получаем HTTP метод и запрошенный путь
-        до файла на диске. Отправляем ответ на запрос.
+def handle_request(socket, method, uri, headers, doc_root):
+    """ Обрабатываем GET и HEAD запросы. Находим запрошенный
+        файл на диске, считываем его содержимое или размер,
+        формируем и отправляем ответ.
     """
-    request.read()
 
-    method = request.method
-    uri = strip_uri_path(request.uri)
+    uri = strip_uri_path(uri)
 
     if method not in ["GET", "HEAD"]:
-        raise MethodNotAllowed
+        raise HttpError(HTTPStatus.METHOD_NOT_ALLOWED)
 
     logging.info(f'Handle {method} {uri}')
     path = get_path(doc_root, uri)
     if not path:
-        raise NotFound
+        raise HttpError(HTTPStatus.NOT_FOUND)
 
     logging.info(f'Requested {path}')
 
     (_, ext) = os.path.splitext(path)
-    mime_type = get_mime_type(ext)
+    mime_type = mimetypes.types_map[ext]
 
     content = None
     content_len = 0
@@ -62,15 +69,16 @@ def handle_request(request, doc_root):
                 content = file.read()
             content_len = len(content)
         except Exception:
-            raise Forbidden
+            raise HttpError(HTTPStatus.FORBIDDEN)
     else:
         try:
             content_len = os.path.getsize(path)
         except Exception:
-            raise Forbidden
+            raise HttpError(HTTPStatus.FORBIDDEN)
 
-    request.response(
-        200,
+    send_response(
+        socket,
+        HTTPStatus.OK,
         {"Content-Type": mime_type, "Content-Length": content_len},
         content
     )
@@ -99,6 +107,8 @@ if __name__ == '__main__':
     log_level = getattr(logging, args.log_level)
     logging.basicConfig(level=getattr(logging, args.log_level))
     install_mp_handler()
+
+    mimetypes.init()
 
     server = HttpServer(
         '127.0.0.1', args.port,
