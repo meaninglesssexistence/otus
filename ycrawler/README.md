@@ -37,7 +37,13 @@ optional arguments:
   -s STORAGE, --storage STORAGE
                         Storage folder
   -t INTERVAL, --interval INTERVAL
-                        Crawling interval (seconds)
+                        Crawling interval (600 seconds by default)
+  -p CONNECTIONS, --connections CONNECTIONS
+                        Number of simultaneously opened connections (10 by default)
+  -r REQUEST_RETRIES, --request-retries REQUEST_RETRIES
+                        Number of HTTP request retries (3 by default)
+  -w RETRIES_SLEEP, --retries-sleep RETRIES_SLEEP
+                        Number of seconds to sleep between HTTP request retries (2 seconds by default)
   -l {DEBUG,INFO,WARNING,ERROR,CRITICAL}, --log-level {DEBUG,INFO,WARNING,ERROR,CRITICAL}
                         Set the logging level
 ```
