@@ -11,6 +11,7 @@ class TestSuite(unittest.TestCase):
     def test_store_cache_get(self):
         _self = Mock()
         _self.retry = 3
+        _self.retry_timeout = 0
         _self.client.get.return_value = 42
         self.assertEqual(Store.cache_get(_self, "key"), 42)
         _self.client.get.side_effect = Exception
@@ -19,6 +20,7 @@ class TestSuite(unittest.TestCase):
     def test_store_cache_set(self):
         _self = Mock()
         _self.retry = 3
+        _self.retry_timeout = 0
         _self.client.set.return_value = None
         self.assertEqual(Store.cache_set(_self, "key", 42), None)
         _self.client.set.side_effect = Exception
@@ -27,6 +29,7 @@ class TestSuite(unittest.TestCase):
     def test_store_get(self):
         _self = Mock()
         _self.retry = 3
+        _self.retry_timeout = 0
         _self.client.get.return_value = 42
         self.assertEqual(Store.get(_self, "key"), 42)
         _self.client.get.side_effect = Exception
